@@ -6,14 +6,14 @@ pragma solidity ^0.8.0;
 // · 向 Coordinator 发起随机数请求
 // · 验证并接收回调
 // · 管理订阅、支付和权限（onlyOwner）等
-import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
+import {VRFConsumerBaseV2Plus} from "lib/chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
 
 // —— 导入 Chainlink VRF 请求参数辅助库 ——
 // VRFV2PlusClient 提供请求参数结构体和序列化方法：
 // · RandomWordsRequest：封装 keyHash、subId、gas 等请求参数
 // · ExtraArgsV1：封装额外选项（如 nativePayment）
 // · _argsToBytes：将 ExtraArgsV1 按 ABI 编码并打上版本标识
-import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
+import {VRFV2PlusClient} from "lib/chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
 
 contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
     // 请求发起事件：记录 requestId 与请求的随机数个数
