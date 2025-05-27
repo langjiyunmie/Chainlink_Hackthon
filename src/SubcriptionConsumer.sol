@@ -34,8 +34,7 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
     // —— keyHash（Gas Lane） ——
     // 用于指定 VRFCoordinator 上允许的最高 gas price
     // 不同网络或配置对应不同 keyHash，请参考官方文档
-    bytes32 public keyHash =
-        0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae;
+    bytes32 public keyHash = 0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae;
 
     // 历史请求 ID 列表与最新一次请求 ID
     uint256[] public requestIds;
@@ -56,9 +55,7 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
      * 并初始化 s_subscriptionId
      * @param subscriptionId 已创建并充值的 Chainlink 订阅 ID
      */
-    constructor(
-        uint256 subscriptionId
-    )
+    constructor(uint256 subscriptionId)
         VRFConsumerBaseV2Plus(
             0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B // Sepolia Coordinator
         )
@@ -71,9 +68,7 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
      * @param enableNativePayment true = 使用原生链上币支付，false = 使用 LINK 支付
      * @return requestId 本次请求的唯一标识
      */
-    function requestRandomWords(
-        bool enableNativePayment
-    ) external onlyOwner returns (uint256 requestId) {
+    function requestRandomWords(bool enableNativePayment) external onlyOwner returns (uint256 requestId) {
         // 调用 Coordinator 的 requestRandomWords，并打包所有参数
         requestId = s_vrfCoordinator.requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({
@@ -83,19 +78,15 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
                 callbackGasLimit: callbackGasLimit, // 回调可用 gas
                 numWords: numWords, // 请求随机数个数
                 extraArgs: VRFV2PlusClient._argsToBytes( // 序列化额外参数
-                    VRFV2PlusClient.ExtraArgsV1({
-                        nativePayment: enableNativePayment // 支付选项
-                    })
-                )
+                        VRFV2PlusClient.ExtraArgsV1({
+                            nativePayment: enableNativePayment // 支付选项
+                        })
+                    )
             })
         );
 
         // 在内部状态中登记此请求（初始未完成，无随机数）
-        s_requests[requestId] = RequestStatus({
-            randomWords: new uint256[](0),
-            exists: true,
-            fulfilled: false
-        });
+        s_requests[requestId] = RequestStatus({randomWords: new uint256[](0), exists: true, fulfilled: false});
 
         // 更新历史记录并触发事件
         requestIds.push(requestId);
@@ -109,10 +100,7 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
      * @param _requestId  原始请求 ID
      * @param _randomWords Coordinator 传回的随机数数组
      */
-    function fulfillRandomWords(
-        uint256 _requestId,
-        uint256[] calldata _randomWords
-    ) internal override {
+    function fulfillRandomWords(uint256 _requestId, uint256[] calldata _randomWords) internal override {
         // 仅处理已知的 requestId，防止非法调用
         require(s_requests[_requestId].exists, "request not found");
         // 标记已完成，并存储随机数
@@ -128,9 +116,11 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
      * @return fulfilled   是否已回调完成
      * @return randomWords 完成后返回的随机数列表
      */
-    function getRequestStatus(
-        uint256 _requestId
-    ) external view returns (bool fulfilled, uint256[] memory randomWords) {
+    function getRequestStatus(uint256 _requestId)
+        external
+        view
+        returns (bool fulfilled, uint256[] memory randomWords)
+    {
         require(s_requests[_requestId].exists, "request not found");
         RequestStatus memory request = s_requests[_requestId];
         return (request.fulfilled, request.randomWords);
