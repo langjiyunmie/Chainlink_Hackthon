@@ -7,6 +7,7 @@ import "./interfaces/IUniswapV2Router01.sol";
 import "./interfaces/IWETH.sol";
 import "./libraries/TransferHelper.sol";
 import "./libraries/UniswapV2Library.sol";
+import "src/Mev/interfaces/IMEVGuard.sol";
 
 /// @title Uniswap V2 路由器合约 (Router01)
 /// @notice 本合约封装了对多个 Pair 合约的交互，提供一站式的添加/移除流动性和多跳兑换功能
@@ -19,6 +20,8 @@ contract UniswapV2Router01 {
     /// @notice WETH 合约地址，包装 ETH 以支持 ERC20 接口
     address public immutable WETH;
 
+    address public MEVGuard;
+
     /// @dev 在截止时间之后调用的交易会 revert
     modifier ensure(uint256 deadline) {
         require(deadline >= block.timestamp, "UniswapV2Router: EXPIRED");
@@ -30,6 +33,7 @@ contract UniswapV2Router01 {
     constructor(address _factory, address _WETH) {
         factory = _factory;
         WETH = _WETH;
+        MEVGuard = IUniswapV2Factory(factory).MEVGuard();
     }
 
     /// @notice 接收 ETH，只允许来自 WETH 合约的转账
@@ -229,7 +233,13 @@ contract UniswapV2Router01 {
     // **** 多跳交换 (Swap) ****
 
     /// @dev 私有循环 swap，按 path 中的每一对依次调用 Pair.swap
-    function _swap(uint256[] memory amounts, address[] memory path, address _to) private {
+    function _swap(uint256[] memory amounts, address[] memory path, address originTo, bool antiMEV) private {
+        if (antiMEV) {
+            // 记录调用者地址
+            originTo = msg.sender;
+            IMEVGuard(MEVGuard).setOriginTo(originTo);
+        }
+
         for (uint256 i = 0; i < path.length - 1; i++) {
             // 1. 当前跳的输入/输出 token
             (address input, address output) = (path[i], path[i + 1]);
@@ -241,10 +251,10 @@ contract UniswapV2Router01 {
             (uint256 amount0Out, uint256 amount1Out) =
                 input == token0 ? (uint256(0), amountOut) : (amountOut, uint256(0));
             // 5. 确定下一跳的接收地址：若不是最后一跳，则是下一个 Pair
-            address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : _to;
+            address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : originTo;
             // 6. 调用当前 Pair 的 swap
             IUniswapV2Pair(UniswapV2Library.pairFor(factory, input, output)).swap(
-                amount0Out, amount1Out, to, new bytes(0)
+                amount0Out, amount1Out, to, MEVGuard, new bytes(0), antiMEV
             );
         }
     }
@@ -255,7 +265,8 @@ contract UniswapV2Router01 {
         uint256 amountOutMin,
         address[] calldata path,
         address to,
-        uint256 deadline
+        uint256 deadline,
+        bool antiMEV
     ) external ensure(deadline) returns (uint256[] memory amounts) {
         // 1. 计算每一跳的输出量
         amounts = UniswapV2Library.getAmountsOut(factory, amountIn, path);
@@ -265,7 +276,7 @@ contract UniswapV2Router01 {
             path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
         // 3. 执行多跳 swap
-        _swap(amounts, path, to);
+        _swap(amounts, path, to, antiMEV);
     }
 
     /// @notice 给定期望输出 amountOut，按 path 反向计算并完成 swap
@@ -274,7 +285,8 @@ contract UniswapV2Router01 {
         uint256 amountInMax,
         address[] calldata path,
         address to,
-        uint256 deadline
+        uint256 deadline,
+        bool antiMEV
     ) external ensure(deadline) returns (uint256[] memory amounts) {
         // 1. 反向计算每跳输入量
         amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
@@ -284,17 +296,18 @@ contract UniswapV2Router01 {
             path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
         // 3. 执行多跳 swap
-        _swap(amounts, path, to);
+        _swap(amounts, path, to, antiMEV);
     }
 
     // **** ETH 相关快捷 swap ****
 
-    function swapExactETHForTokens(uint256 amountOutMin, address[] calldata path, address to, uint256 deadline)
-        external
-        payable
-        ensure(deadline)
-        returns (uint256[] memory amounts)
-    {
+    function swapExactETHForTokens(
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline,
+        bool antiMEV
+    ) external payable ensure(deadline) returns (uint256[] memory amounts) {
         require(path[0] == WETH, "UniswapV2Router: INVALID_PATH");
         // 1. 用 msg.value 计算多跳输出
         amounts = UniswapV2Library.getAmountsOut(factory, msg.value, path);
@@ -303,7 +316,7 @@ contract UniswapV2Router01 {
         IWETH(WETH).deposit{value: amounts[0]}();
         assert(IWETH(WETH).transfer(UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]));
         // 3. 执行 swap
-        _swap(amounts, path, to);
+        _swap(amounts, path, to, antiMEV);
     }
 
     function swapTokensForExactETH(
@@ -311,7 +324,8 @@ contract UniswapV2Router01 {
         uint256 amountInMax,
         address[] calldata path,
         address to,
-        uint256 deadline
+        uint256 deadline,
+        bool antiMEV
     ) external ensure(deadline) returns (uint256[] memory amounts) {
         require(path[path.length - 1] == WETH, "UniswapV2Router: INVALID_PATH");
         amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
@@ -319,7 +333,7 @@ contract UniswapV2Router01 {
         TransferHelper.safeTransferFrom(
             path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
-        _swap(amounts, path, address(this));
+        _swap(amounts, path, address(this), antiMEV);
         // 解包 WETH -> ETH 并转给 to
         IWETH(WETH).withdraw(amounts[path.length - 1]);
         TransferHelper.safeTransferETH(to, amounts[path.length - 1]);
@@ -330,7 +344,8 @@ contract UniswapV2Router01 {
         uint256 amountOutMin,
         address[] calldata path,
         address to,
-        uint256 deadline
+        uint256 deadline,
+        bool antiMEV
     ) external ensure(deadline) returns (uint256[] memory amounts) {
         require(path[path.length - 1] == WETH, "UniswapV2Router: INVALID_PATH");
         amounts = UniswapV2Library.getAmountsOut(factory, amountIn, path);
@@ -338,23 +353,24 @@ contract UniswapV2Router01 {
         TransferHelper.safeTransferFrom(
             path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
-        _swap(amounts, path, address(this));
+        _swap(amounts, path, address(this), antiMEV);
         IWETH(WETH).withdraw(amounts[path.length - 1]);
         TransferHelper.safeTransferETH(to, amounts[path.length - 1]);
     }
 
-    function swapETHForExactTokens(uint256 amountOut, address[] calldata path, address to, uint256 deadline)
-        external
-        payable
-        ensure(deadline)
-        returns (uint256[] memory amounts)
-    {
+    function swapETHForExactTokens(
+        uint256 amountOut,
+        address[] calldata path,
+        address to,
+        uint256 deadline,
+        bool antiMEV
+    ) external payable ensure(deadline) returns (uint256[] memory amounts) {
         require(path[0] == WETH, "UniswapV2Router: INVALID_PATH");
         amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
         require(amounts[0] <= msg.value, "UniswapV2Router: EXCESSIVE_INPUT_AMOUNT");
         IWETH(WETH).deposit{value: amounts[0]}();
         assert(IWETH(WETH).transfer(UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]));
-        _swap(amounts, path, to);
+        _swap(amounts, path, to, antiMEV);
         // 退回未使用的 ETH
         if (msg.value > amounts[0]) {
             TransferHelper.safeTransferETH(msg.sender, msg.value - amounts[0]);

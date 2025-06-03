@@ -1,13 +1,7 @@
-// SPDX-License-Identifier: GPL-3.0-only
-pragma solidity ^0.8.13;
+//SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.28;
 
-interface IUniswapV2Factory {
-    event PairCreated(address indexed token0, address indexed token1, address pair, uint256 allPairsLength);
-
-    function feeToSetter() external view returns (address);
-
-    function setFeeToSetter(address) external;
-
+interface IOutrunAMMFactory {
     function swapFeeRate() external view returns (uint256);
 
     function pairImplementation() external view returns (address);
@@ -33,4 +27,6 @@ interface IUniswapV2Factory {
     error PairExists();
 
     error IdenticalAddresses();
+
+    event PairCreated(address indexed token0, address indexed token1, address pair, uint256 allPairsLength);
 }

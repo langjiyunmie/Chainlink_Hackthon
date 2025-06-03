@@ -3,12 +3,15 @@ pragma solidity ^0.8.13;
 
 import "./interfaces/IUniswapV2Factory.sol";
 import "./UniswapV2Pair.sol";
+import "src/Mev/interfaces/IMEVGuard.sol";
 
 contract UniswapV2Factory {
     /// @notice 收手续费的地址
     address public feeTo;
     /// @notice 有权限设置 feeTo 的地址
     address public feeToSetter;
+    /// @notice MEV Guard 合约地址，用于防止前端抢跑和 MEV 攻击
+    address public MEVGuard;
 
     /// @notice 存储 token0->token1 对应的 Pair 合约地址
     mapping(address => mapping(address => address)) public getPair;
@@ -17,8 +20,9 @@ contract UniswapV2Factory {
 
     event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
 
-    constructor(address _feeToSetter) {
+    constructor(address _feeToSetter, address _MEVGuard) {
         feeToSetter = _feeToSetter;
+        MEVGuard = _MEVGuard;
     }
 
     /// @notice 返回当前已创建的 Pair 数量
@@ -63,6 +67,8 @@ contract UniswapV2Factory {
         getPair[token1][token0] = pair;
         // 10. 把新 Pair 加入 allPairs 列表
         allPairs.push(pair);
+        // 授权pair交易对使用MEVGuard
+        IMEVGuard(MEVGuard).setAntiFrontDefendBlockEdge(pair, block.number);
         // 11. 触发事件，外部监听
         emit PairCreated(token0, token1, pair, allPairs.length);
     }
@@ -77,5 +83,10 @@ contract UniswapV2Factory {
     function setFeeToSetter(address _feeToSetter) external {
         require(msg.sender == feeToSetter, "UniswapV2: FORBIDDEN");
         feeToSetter = _feeToSetter;
+    }
+
+    function setMEVGuard(address _MEVGuard) external {
+        require(msg.sender == feeToSetter, "UniswapV2: FORBIDDEN");
+        MEVGuard = _MEVGuard;
     }
 }

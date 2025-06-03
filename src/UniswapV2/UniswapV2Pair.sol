@@ -8,6 +8,7 @@ import "./libraries/UQ112x112.sol";
 import "./interfaces/IERC20.sol";
 import "./interfaces/IUniswapV2Factory.sol";
 import "./interfaces/IUniswapV2Callee.sol";
+import "src/Mev/interfaces/IMEVGuard.sol";
 
 /// @title Uniswap V2 单交易对合约
 /// @notice 管理一个 Token0-Token1 交易对的流动性、兑换、手续费和价格累积
@@ -40,12 +41,46 @@ contract UniswapV2Pair is UniswapV2ERC20 {
 
     uint256 private unlocked = 1;
 
+    error InsufficientOutputAmount();
+    error InsufficientLiquidity();
+    error InsufficientInputAmount();
+    error EmptyOriginTo();
+    error InvalidTo();
+    error ProductKLoss();
+
+    /// @notice 当 swap 被 MEVGuard 拦截而中断时触发
+    /// @param sender         原始调用 swap 的地址（通常是用户或路由合约）
+    /// @param amount0In      本次 swap 实际传入的 token0 数量
+    /// @param amount1In      本次 swap 实际传入的 token1 数量
+    /// @param amount0Out     本次 swap 期望输出的 token0 数量
+    /// @param amount1Out     本次 swap 期望输出的 token1 数量
+    /// @param originTo       MEVGuard 指定的退款地址
+    event SwapInterrupted(
+        address indexed sender,
+        uint256 amount0In,
+        uint256 amount1In,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address indexed originTo
+    );
+
+    /// @notice 当 swap 完成并分发返佣与协议分成时触发
+    /// @param referrer       本次 swap 的推荐人地址（返佣接收者）
+    /// @param rebateFee0     token0 侧实际发给推荐人的返佣数量
+    /// @param rebateFee1     token1 侧实际发给推荐人的返佣数量
+    /// @param protocolFee0   token0 侧实际发给协议的分成数量
+    /// @param protocolFee1   token1 侧实际发给协议的分成数量
+    event ProtocolFee(
+        address indexed referrer, uint256 rebateFee0, uint256 rebateFee1, uint256 protocolFee0, uint256 protocolFee1
+    );
+
     modifier lock() {
         require(unlocked == 1, "UniswapV2: LOCKED");
         unlocked = 0;
         _;
         unlocked = 1;
     }
+
     // 防重入锁，确保一个交易中不会重复进入
 
     /// @notice 构造函数：记录 factory 地址
@@ -176,42 +211,73 @@ contract UniswapV2Pair is UniswapV2ERC20 {
         emit Burn(msg.sender, amount0, amount1, to);
     }
 
-    /// @notice 执行 swap，先乐观转出再校验恒定乘积
-    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external lock {
-        require(amount0Out > 0 || amount1Out > 0, "UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT");
+    /// @notice 执行代币交换，支持 antiMEV 模式，采用 0.3% 恒定乘积手续费
+    function swap(
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address to,
+        address MEVGuard,
+        bytes calldata data,
+        bool antiMEV
+    ) external lock returns (bool) {
+        require(amount0Out > 0 || amount1Out > 0, InsufficientOutputAmount());
         (uint112 _reserve0, uint112 _reserve1,) = getReserves();
-        require(amount0Out < _reserve0 && amount1Out < _reserve1, "UniswapV2: INSUFFICIENT_LIQUIDITY");
+        require(amount0Out < _reserve0 && amount1Out < _reserve1, InsufficientLiquidity());
+
+        address _token0 = token0;
+        address _token1 = token1;
+        uint256 amount0In = IERC20(_token0).balanceOf(address(this)) - _reserve0;
+        uint256 amount1In = IERC20(_token1).balanceOf(address(this)) - _reserve1;
+
+        // 3. MEVGuard 防护
+        if (!IMEVGuard(MEVGuard).defend(antiMEV, _reserve0, _reserve1, amount0Out, amount1Out)) {
+            address originTo = IMEVGuard(MEVGuard).getOriginTo();
+            require(originTo != address(0), EmptyOriginTo());
+            if (amount0In != 0) _safeTransfer(_token0, originTo, amount0In);
+            if (amount1In != 0) _safeTransfer(_token1, originTo, amount1In);
+            emit SwapInterrupted(msg.sender, amount0In, amount1In, amount0Out, amount1Out, originTo);
+            return false;
+        }
 
         uint256 balance0;
         uint256 balance1;
         {
-            address _token0 = token0;
-            address _token1 = token1;
-            require(to != _token0 && to != _token1, "UniswapV2: INVALID_TO");
+            // 4. 乐观转出 + 回调
+            require(to != _token0 && to != _token1, InvalidTo());
+
             if (amount0Out > 0) _safeTransfer(_token0, to, amount0Out);
             if (amount1Out > 0) _safeTransfer(_token1, to, amount1Out);
-            // 闪兑回调，允许调用方执行自定义逻辑并归还资产
-            if (data.length > 0) IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
+            if (data.length > 0) {
+                IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
+            }
             balance0 = IERC20(_token0).balanceOf(address(this));
             balance1 = IERC20(_token1).balanceOf(address(this));
         }
-        // 计算实际输入量
-        uint256 amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
-        uint256 amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
-        require(amount0In > 0 || amount1In > 0, "UniswapV2: INSUFFICIENT_INPUT_AMOUNT");
 
-        // 按 0.3% 手续费调整后的恒定乘积校验
+        unchecked {
+            amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
+            amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
+        }
+        require(amount0In > 0 || amount1In > 0, InsufficientInputAmount());
+
+        // 5. 按 Uniswap 0.3% 恒定乘积手续费校验
         {
-            uint256 balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
-            uint256 balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
+            // 若 antiMEV = true，可视需要自定义更高手续费率，这里保持 0.3% 固定费率
+            // 即 feeRate = 3 (3/1000 = 0.3%)
+            uint256 feeRate = 3;
+            uint256 balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(feeRate));
+            uint256 balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(feeRate));
             require(
                 balance0Adjusted.mul(balance1Adjusted) >= uint256(_reserve0).mul(_reserve1).mul(1000 ** 2),
-                "UniswapV2: K"
+                ProductKLoss()
             );
         }
 
+        // 6. 更新储备
         _update(balance0, balance1, _reserve0, _reserve1);
+
         emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out, to);
+        return true;
     }
 
     /// @notice 清除多余余额，将 balance - reserve 部分转给 to
