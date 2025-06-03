@@ -69,6 +69,7 @@ contract UniswapV2Factory {
         allPairs.push(pair);
         // 授权pair交易对使用MEVGuard
         IMEVGuard(MEVGuard).setAntiFrontDefendBlockEdge(pair, block.number);
+        IMEVGuard(MEVGuard).setFactoryStatus(address(this), true);
         // 11. 触发事件，外部监听
         emit PairCreated(token0, token1, pair, allPairs.length);
     }
@@ -85,8 +86,4 @@ contract UniswapV2Factory {
         feeToSetter = _feeToSetter;
     }
 
-    function setMEVGuard(address _MEVGuard) external {
-        require(msg.sender == feeToSetter, "UniswapV2: FORBIDDEN");
-        MEVGuard = _MEVGuard;
-    }
 }

@@ -64,16 +64,6 @@ contract UniswapV2Pair is UniswapV2ERC20 {
         address indexed originTo
     );
 
-    /// @notice 当 swap 完成并分发返佣与协议分成时触发
-    /// @param referrer       本次 swap 的推荐人地址（返佣接收者）
-    /// @param rebateFee0     token0 侧实际发给推荐人的返佣数量
-    /// @param rebateFee1     token1 侧实际发给推荐人的返佣数量
-    /// @param protocolFee0   token0 侧实际发给协议的分成数量
-    /// @param protocolFee1   token1 侧实际发给协议的分成数量
-    event ProtocolFee(
-        address indexed referrer, uint256 rebateFee0, uint256 rebateFee1, uint256 protocolFee0, uint256 protocolFee1
-    );
-
     modifier lock() {
         require(unlocked == 1, "UniswapV2: LOCKED");
         unlocked = 0;

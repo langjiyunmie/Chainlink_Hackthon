@@ -82,7 +82,7 @@ contract MEVGuard is IMEVGuard, Ownable {
         uint256 currentBlockNum = block.number;
 
         // 将当前区块的请求计数 +1，并保存在 executionDetails[currentBlockNum].requestNum
-        uint256 _currentExecutionRequestNum = ++executionDetails[currentBlockNum].requestNum;
+        ++executionDetails[currentBlockNum].requestNum;
 
         // =================== 防前端抢跑逻辑（Anti-Front Running） ===================
         // 如果当前区块号小于该 pair 对应的 antiFrontDefendBlockEdge，说明还在“防前端抢跑”阶段
