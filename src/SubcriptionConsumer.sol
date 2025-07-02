@@ -41,7 +41,7 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
     uint256 public lastRequestId;
 
     // 回调时可用的最大 gas（根据 fulfillRandomWords 逻辑复杂度调整）
-    uint32 public callbackGasLimit = 100000;
+    uint32 public callbackGasLimit = 1000000;
     // 在 VRFCoordinator 确认随机性前等待的区块数，越高安全性越强但确认时间更长
     uint16 public requestConfirmations = 3;
     // 本次请求要返回的随机数个数，不能超过 Coordinator 配置的最大值（通常 500）
@@ -96,7 +96,7 @@ contract SubcriptionConsumer is VRFConsumerBaseV2Plus {
     }
 
     /**
-     * VRFCoordinator 回调钩子（internal，只能由基类 rawFulfillRandomWords 调用）
+     * VRFCoordinator 回调钩子（只有 Chainlink 节点（VRFCoordinator）通过基类里的 rawFulfillRandomWords 才能真正触发它）
      * @param _requestId  原始请求 ID
      * @param _randomWords Coordinator 传回的随机数数组
      */

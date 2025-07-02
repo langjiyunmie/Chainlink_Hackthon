@@ -50,11 +50,13 @@ contract MEVGuard is IMEVGuard, Ownable {
         address _owner,
         uint256 _antiFrontDefendBlock,
         uint256 _antiMEVFeePercentage,
-        uint256 _antiMEVAmountOutLimitRate
+        uint256 _antiMEVAmountOutLimitRate,
+        address _subscriptionConsumer
     ) Ownable(_owner) {
         antiFrontDefendBlock = _antiFrontDefendBlock;
         antiMEVFeePercentage = _antiMEVFeePercentage;
         antiMEVAmountOutLimitRate = _antiMEVAmountOutLimitRate;
+        subscriptionConsumer = SubcriptionConsumer(_subscriptionConsumer);
     }
 
     /**
